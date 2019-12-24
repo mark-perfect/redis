@@ -50,6 +50,7 @@
 #include <signal.h>
 
 typedef long long mstime_t; /* millisecond time type. */
+typedef long long ustime_t; /* microsecond time type. */
 
 #include "ae.h"      /* Event driven programming library */
 #include "sds.h"     /* Dynamic safe strings */
@@ -988,7 +989,8 @@ struct redisServer {
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /* There is to write or install handler. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
-    client *current_client; /* Current client, only used on crash report */
+    client *current_client;     /* Current client executing the command. */
+    long fixed_time_expire;     /* If > 0, expire keys against server.mstime. */
     rax *clients_index;         /* Active clients dictionary by client ID. */
     int clients_paused;         /* True if clients are currently paused */
     mstime_t clients_pause_end_time; /* Time when we undo clients_paused */
@@ -1231,7 +1233,8 @@ struct redisServer {
     time_t unixtime;    /* Unix time sampled every cron cycle. */
     time_t timezone;    /* Cached timezone. As set by tzset(). */
     int daylight_active;    /* Currently in daylight saving time. */
-    long long mstime;   /* Like 'unixtime' but with milliseconds resolution. */
+    mstime_t mstime;            /* 'unixtime' in milliseconds. */
+    ustime_t ustime;            /* 'unixtime' in microseconds. */
     /* Pubsub */
     dict *pubsub_channels;  /* Map channels to list of subscribed clients */
     list *pubsub_patterns;  /* A list of pubsub_patterns */
@@ -1650,6 +1653,7 @@ void openChildInfoPipe(void);
 void closeChildInfoPipe(void);
 void sendChildInfo(int process_type);
 void receiveChildInfo(void);
+int hasActiveChildProcess();
 
 /* Sorted sets data type */
 
@@ -1728,6 +1732,8 @@ struct redisCommand *lookupCommandOrOriginal(sds name);
 void call(client *c, int flags);
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc, int flags);
 void alsoPropagate(struct redisCommand *cmd, int dbid, robj **argv, int argc, int target);
+void redisOpArrayInit(redisOpArray *oa);
+void redisOpArrayFree(redisOpArray *oa);
 void forceCommandPropagation(client *c, int flags);
 void preventCommandPropagation(client *c);
 void preventCommandAOF(client *c);
@@ -1748,7 +1754,7 @@ void populateCommandTable(void);
 void resetCommandTableStats(void);
 void adjustOpenFilesLimit(void);
 void closeListeningSockets(int unlink_unix_socket);
-void updateCachedTime(void);
+void updateCachedTime(int update_daylight_info);
 void resetServerStats(void);
 void activeDefragCycle(void);
 unsigned int getLRUClock(void);
